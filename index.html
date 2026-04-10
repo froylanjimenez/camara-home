@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>CamaraHome</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --border: #2a2a3a;
+      --accent: #4f8ef7;
+      --accent2: #7c3aed;
+      --text: #e8e8f0;
+      --muted: #888;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warn: #f59e0b;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* ─── SCREENS ─────────────────────────────────────────── */
+    .screen { display: none; position: fixed; inset: 0; }
+    .screen.active { display: flex; }
+
+    /* ─── SETUP SCREEN ────────────────────────────────────── */
+    #screenSetup {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 70%);
+      padding: 2rem;
+      gap: 0;
+    }
+
+    .setup-logo {
+      font-size: 3.5rem;
+      margin-bottom: .5rem;
+      filter: drop-shadow(0 0 20px #4f8ef760);
+    }
+    .setup-title {
+      font-size: 1.8rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: .3rem;
+    }
+    .setup-subtitle {
+      color: var(--muted);
+      font-size: .9rem;
+      margin-bottom: 2rem;
+    }
+
+    .setup-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    .setup-label {
+      font-size: .8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: .3rem;
+    }
+
+    .setup-input {
+      width: 100%;
+      background: #0d0d16;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 1.5rem;
+      text-align: center;
+      letter-spacing: .3em;
+      padding: .7rem 1rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .setup-input:focus { border-color: var(--accent); }
+
+    .mode-row {
+      display: flex;
+      gap: .75rem;
+    }
+    .mode-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .4rem;
+      padding: 1rem .5rem;
+      background: #0d0d16;
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .2s;
+      font-size: .85rem;
+      font-family: inherit;
+    }
+    .mode-btn .ico { font-size: 1.8rem; }
+    .mode-btn:hover, .mode-btn.sel {
+      border-color: var(--accent);
+      color: var(--text);
+      background: #1a1a30;
+    }
+    .mode-btn.sel { box-shadow: 0 0 0 1px var(--accent) inset; }
+
+    .btn-start {
+      width: 100%;
+      padding: .9rem;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn-start:active { transform: scale(.98); opacity: .9; }
+
+    .setup-hint {
+      font-size: .75rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .setup-hint a { color: var(--accent); text-decoration: none; }
+
+    /* ─── CAMERA SCREEN ───────────────────────────────────── */
+    #screenCamera {
+      flex-direction: column;
+      background: #000;
+    }
+
+    #videoBack {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      position: absolute;
+      inset: 0;
+    }
+
+    /* Info overlay */
+    .cam-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .cam-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 1.2rem 1.4rem .8rem;
+      background: linear-gradient(to bottom, rgba(0,0,0,.75) 0%, transparent 100%);
+      pointer-events: all;
+    }
+
+    .cam-clock {
+      font-size: 3.5rem;
+      font-weight: 200;
+      letter-spacing: .04em;
+      color: #fff;
+      text-shadow: 0 2px 12px rgba(0,0,0,.8);
+      line-height: 1;
+    }
+    .cam-date {
+      font-size: .9rem;
+      color: rgba(255,255,255,.75);
+      margin-top: .2rem;
+      text-shadow: 0 1px 6px rgba(0,0,0,.8);
+    }
+
+    .cam-top-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: .5rem;
+    }
+
+    .cam-weather {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 20px;
+      padding: .35rem .85rem .35rem .6rem;
+      backdrop-filter: blur(8px);
+      font-size: .9rem;
+      color: rgba(255,255,255,.9);
+    }
+    .cam-weather .w-ico { font-size: 1.2rem; }
+    .cam-weather .w-temp { font-size: 1.1rem; font-weight: 600; }
+
+    .cam-viewers {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 20px;
+      padding: .3rem .75rem;
+      backdrop-filter: blur(8px);
+      font-size: .82rem;
+      color: rgba(255,255,255,.8);
+    }
+    .cam-viewers .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: pulse 1.5s infinite;
+    }
+    .cam-viewers .dot.live { background: var(--success); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+
+    .cam-spacer { flex: 1; }
+
+    .cam-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: .8rem 1.4rem 1.4rem;
+      background: linear-gradient(to top, rgba(0,0,0,.75) 0%, transparent 100%);
+      pointer-events: all;
+    }
+
+    .cam-extra-info {
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+    }
+    .cam-info-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      background: rgba(0,0,0,.4);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 14px;
+      padding: .25rem .7rem;
+      backdrop-filter: blur(6px);
+      font-size: .78rem;
+      color: rgba(255,255,255,.75);
+      width: fit-content;
+    }
+
+    .cam-controls {
+      display: flex;
+      flex-direction: column;
+      gap: .6rem;
+      align-items: flex-end;
+    }
+
+    .cam-btn {
+      width: 46px; height: 46px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,.2);
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(8px);
+      color: #fff;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s;
+    }
+    .cam-btn:active { background: rgba(255,255,255,.2); }
+    .cam-btn.active { background: rgba(79,142,247,.4); border-color: var(--accent); }
+
+    /* Front cam PiP */
+    #pipContainer {
+      position: absolute;
+      bottom: 90px;
+      right: 16px;
+      width: 120px;
+      height: 90px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1.5px solid rgba(255,255,255,.25);
+      box-shadow: 0 4px 20px rgba(0,0,0,.5);
+      display: none;
+      cursor: pointer;
+    }
+    #videoFront {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror front cam */
+    }
+
+    /* ─── VIEWER SCREEN ───────────────────────────────────── */
+    #screenViewer {
+      flex-direction: column;
+      background: #000;
+    }
+
+    #videoViewer {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      position: absolute;
+      inset: 0;
+      background: #000;
+    }
+
+    .view-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .view-status {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    .view-status .vs-ico { font-size: 3rem; margin-bottom: 1rem; }
+    .view-status .vs-txt { font-size: 1rem; color: var(--muted); }
+
+    .view-bar {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: .7rem 1.2rem;
+      background: linear-gradient(to top, rgba(0,0,0,.8) 0%, transparent 100%);
+      pointer-events: all;
+    }
+    .view-info {
+      font-size: .8rem;
+      color: rgba(255,255,255,.6);
+    }
+    .view-btn {
+      padding: .45rem 1rem;
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 20px;
+      color: #fff;
+      font-size: .82rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    /* ─── TOAST ───────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 24px;
+      padding: .6rem 1.4rem;
+      font-size: .85rem;
+      color: var(--text);
+      transition: transform .3s;
+      z-index: 9999;
+      white-space: nowrap;
+      box-shadow: 0 4px 20px rgba(0,0,0,.5);
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ─── RESPONSIVE ──────────────────────────────────────── */
+    @media (max-width: 400px) {
+      .cam-clock { font-size: 2.8rem; }
+      #pipContainer { width: 90px; height: 68px; bottom: 80px; }
+    }
+
+    @media (orientation: landscape) and (max-height: 500px) {
+      .cam-clock { font-size: 2.5rem; }
+      .cam-top { padding: .8rem 1.2rem .5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     SETUP SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="screenSetup" class="screen active">
+  <div class="setup-logo">📷</div>
+  <div class="setup-title">CamaraHome</div>
+  <div class="setup-subtitle">Seguridad y vigilancia desde tu tablet</div>
+
+  <div class="setup-card">
+    <div>
+      <div class="setup-label">PIN de acceso</div>
+      <input id="pinInput" class="setup-input" type="password" inputmode="numeric"
+             maxlength="8" placeholder="····" autocomplete="off">
+    </div>
+
+    <div>
+      <div class="setup-label" style="margin-bottom:.6rem">Modo</div>
+      <div class="mode-row">
+        <button class="mode-btn sel" id="modeCam" onclick="selMode('cam')">
+          <span class="ico">📡</span>
+          <strong>Cámara</strong>
+          <span style="font-size:.75rem;color:inherit">Transmitir</span>
+        </button>
+        <button class="mode-btn" id="modeView" onclick="selMode('view')">
+          <span class="ico">👁️</span>
+          <strong>Visor</strong>
+          <span style="font-size:.75rem;color:inherit">Ver en vivo</span>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn-start" onclick="iniciar()">Conectar</button>
+
+    <div class="setup-hint">
+      Usa el mismo PIN en ambos dispositivos.<br>
+      Requiere <strong>HTTPS</strong> para acceder a la cámara.
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     CAMERA SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="screenCamera" class="screen">
+  <video id="videoBack" autoplay playsinline muted></video>
+
+  <!-- PiP front camera -->
+  <div id="pipContainer" onclick="togglePip()">
+    <video id="videoFront" autoplay playsinline muted></video>
+  </div>
+
+  <div class="cam-overlay">
+    <!-- Top bar -->
+    <div class="cam-top">
+      <div>
+        <div class="cam-clock" id="camClock">--:--</div>
+        <div class="cam-date" id="camDate">---</div>
+      </div>
+      <div class="cam-top-right">
+        <div class="cam-weather" id="weatherWidget">
+          <span class="w-ico">⏳</span>
+          <span>Clima...</span>
+        </div>
+        <div class="cam-viewers" id="viewersCount">
+          <span class="dot" id="liveIndicator"></span>
+          <span id="viewersTxt">Sin conexión</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cam-spacer"></div>
+
+    <!-- Bottom bar -->
+    <div class="cam-bottom">
+      <div class="cam-extra-info" id="extraInfo"></div>
+      <div class="cam-controls">
+        <button class="cam-btn" id="btnSwitch" onclick="switchCamera()" title="Cambiar cámara">🔄</button>
+        <button class="cam-btn" id="btnDim" onclick="toggleDim()" title="Atenuar pantalla">🌙</button>
+        <button class="cam-btn" onclick="volverSetup()" title="Desconectar">⏏️</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dim overlay -->
+  <div id="dimOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.92);cursor:pointer;z-index:50"
+       onclick="toggleDim()"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     VIEWER SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="screenViewer" class="screen">
+  <video id="videoViewer" autoplay playsinline></video>
+
+  <div class="view-overlay">
+    <div class="view-status" id="viewStatus">
+      <div class="vs-ico">📡</div>
+      <div class="vs-txt" id="viewStatusTxt">Conectando a la cámara...</div>
+    </div>
+  </div>
+
+  <div class="view-bar">
+    <div class="view-info" id="viewInfo">PIN: ----</div>
+    <button class="view-btn" onclick="volverSetup()">Desconectar</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ─── STATE ─────────────────────────────────────────────── */
+let selectedMode = 'cam';
+let peer = null;
+let camStream = null;       // back camera
+let frontStream = null;     // front camera
+let activeCalls = [];       // calls from viewers (camera side)
+let viewerCall = null;      // call to camera (viewer side)
+let wakeLock = null;
+let dimmed = false;
+let usingFront = false;     // which cam is currently being shared
+let clockInterval = null;
+let reconnectTimer = null;
+let currentPin = '';
+
+/* ─── URL PARAMS — auto-fill from bookmarks ─────────────── */
+(function() {
+  const p = new URLSearchParams(location.search);
+  if (p.get('pin'))  document.getElementById('pinInput').value = p.get('pin');
+  if (p.get('mode')) selMode(p.get('mode'));
+})();
+
+/* ─── SETUP ─────────────────────────────────────────────── */
+function selMode(m) {
+  selectedMode = m;
+  document.getElementById('modeCam').classList.toggle('sel', m === 'cam');
+  document.getElementById('modeView').classList.toggle('sel', m === 'view');
+}
+
+async function iniciar() {
+  const pin = document.getElementById('pinInput').value.trim();
+  if (!pin || pin.length < 3) { toast('Ingresa un PIN de al menos 3 dígitos', 3000); return; }
+  currentPin = pin;
+
+  // Update URL without reload
+  const u = new URL(location.href);
+  u.searchParams.set('pin', pin);
+  u.searchParams.set('mode', selectedMode);
+  history.replaceState({}, '', u);
+
+  showScreen(selectedMode === 'cam' ? 'screenCamera' : 'screenViewer');
+
+  if (selectedMode === 'cam') {
+    await initCameraMode(pin);
+  } else {
+    await initViewerMode(pin);
+  }
+}
+
+function volverSetup() {
+  stopAll();
+  showScreen('screenSetup');
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+/* ─── CAMERA MODE ───────────────────────────────────────── */
+async function initCameraMode(pin) {
+  // Wake Lock
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', async () => {
+        try { wakeLock = await navigator.wakeLock.request('screen'); } catch(_) {}
+      });
+    }
+  } catch(e) { console.warn('WakeLock:', e.message); }
+
+  // Back camera
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    document.getElementById('videoBack').srcObject = camStream;
+  } catch(e) {
+    toast('Error al acceder a la cámara: ' + e.message, 5000);
+    showScreen('screenSetup');
+    return;
+  }
+
+  // Front camera (optional)
+  try {
+    frontStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 360 } },
+      audio: false
+    });
+    document.getElementById('videoFront').srcObject = frontStream;
+    document.getElementById('pipContainer').style.display = 'block';
+  } catch(_) { /* single-camera device */ }
+
+  startClock();
+  fetchWeather();
+
+  // PeerJS
+  const peerId = `ch-${sanitizePin(pin)}`;
+  peer = new Peer(peerId, {
+    debug: 0,
+    config: { iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]}
+  });
+
+  peer.on('open', id => {
+    setViewerStatus(0);
+    toast('Listo — esperando visores', 2500);
+  });
+
+  peer.on('error', err => {
+    if (err.type === 'unavailable-id') {
+      toast('PIN ya en uso — otro dispositivo está transmitiendo', 5000);
+    } else {
+      toast('Error de red: ' + err.message, 4000);
+    }
+    console.error('PeerJS cam error:', err);
+  });
+
+  peer.on('call', call => {
+    const streamToSend = usingFront ? (frontStream || camStream) : camStream;
+    call.answer(streamToSend);
+    activeCalls.push(call);
+    setViewerStatus(activeCalls.length);
+
+    call.on('close', () => {
+      activeCalls = activeCalls.filter(c => c !== call);
+      setViewerStatus(activeCalls.length);
+    });
+    call.on('error', () => {
+      activeCalls = activeCalls.filter(c => c !== call);
+      setViewerStatus(activeCalls.length);
+    });
+  });
+
+  // Keep wake lock on visibility change
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && wakeLock === null) {
+      try { wakeLock = await navigator.wakeLock.request('screen'); } catch(_) {}
+    }
+  });
+}
+
+function setViewerStatus(n) {
+  const dot = document.getElementById('liveIndicator');
+  const txt = document.getElementById('viewersTxt');
+  if (n === 0) {
+    dot.classList.remove('live');
+    txt.textContent = 'Sin visores';
+  } else {
+    dot.classList.add('live');
+    txt.textContent = `EN VIVO · ${n} ${n === 1 ? 'visor' : 'visores'}`;
+  }
+}
+
+async function switchCamera() {
+  if (!frontStream) { toast('Solo hay una cámara disponible', 2000); return; }
+  usingFront = !usingFront;
+
+  const newStream = usingFront ? frontStream : camStream;
+  const oldStream = usingFront ? camStream : frontStream;
+
+  // Swap video elements
+  document.getElementById('videoBack').srcObject = newStream;
+  document.getElementById('videoFront').srcObject = oldStream;
+  document.getElementById('videoFront').style.transform = usingFront ? '' : 'scaleX(-1)';
+
+  // Replace track sent to all viewers
+  const newTrack = newStream.getVideoTracks()[0];
+  for (const call of activeCalls) {
+    const senders = call.peerConnection?.getSenders?.() || [];
+    const videoSender = senders.find(s => s.track?.kind === 'video');
+    if (videoSender) {
+      try { await videoSender.replaceTrack(newTrack); } catch(e) {}
+    }
+  }
+
+  document.getElementById('btnSwitch').classList.toggle('active', usingFront);
+  toast(usingFront ? 'Cámara frontal' : 'Cámara trasera', 1500);
+}
+
+function toggleDim() {
+  dimmed = !dimmed;
+  document.getElementById('dimOverlay').style.display = dimmed ? 'block' : 'none';
+  document.getElementById('btnDim').classList.toggle('active', dimmed);
+}
+
+function togglePip() {
+  // Swap main and pip on tap
+  if (frontStream) switchCamera();
+}
+
+/* ─── VIEWER MODE ───────────────────────────────────────── */
+async function initViewerMode(pin) {
+  document.getElementById('viewInfo').textContent = `PIN: ${pin}`;
+  document.getElementById('viewStatusTxt').textContent = 'Conectando a la cámara...';
+  document.getElementById('viewStatus').style.display = 'flex';
+  document.getElementById('viewStatus').style.flexDirection = 'column';
+  document.getElementById('viewStatus').style.alignItems = 'center';
+
+  peer = new Peer(undefined, {
+    debug: 0,
+    config: { iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]}
+  });
+
+  peer.on('open', () => connectToCamera(pin));
+  peer.on('error', err => {
+    console.error('PeerJS viewer error:', err);
+    scheduleReconnect(pin);
+  });
+}
+
+function connectToCamera(pin) {
+  const peerId = `ch-${sanitizePin(pin)}`;
+  document.getElementById('viewStatusTxt').textContent = 'Buscando cámara...';
+
+  // Send empty stream (required by PeerJS call API)
+  const emptyStream = new MediaStream();
+  viewerCall = peer.call(peerId, emptyStream);
+
+  if (!viewerCall) {
+    scheduleReconnect(pin);
+    return;
+  }
+
+  viewerCall.on('stream', stream => {
+    document.getElementById('viewStatus').style.display = 'none';
+    const vid = document.getElementById('videoViewer');
+    vid.srcObject = stream;
+    vid.play().catch(() => {});
+    clearTimeout(reconnectTimer);
+    toast('Conectado a la cámara', 2000);
+  });
+
+  viewerCall.on('close', () => {
+    document.getElementById('viewStatus').style.display = 'flex';
+    document.getElementById('viewStatusTxt').textContent = 'Cámara desconectada. Reconectando...';
+    scheduleReconnect(pin);
+  });
+
+  viewerCall.on('error', () => {
+    document.getElementById('viewStatusTxt').textContent = 'Error de conexión. Reintentando...';
+    scheduleReconnect(pin);
+  });
+
+  // Timeout if no stream in 10s
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    if (document.getElementById('viewStatus').style.display !== 'none') {
+      document.getElementById('viewStatusTxt').textContent = 'Sin respuesta. Reintentando...';
+      viewerCall?.close();
+      scheduleReconnect(pin);
+    }
+  }, 10000);
+}
+
+function scheduleReconnect(pin) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    if (document.getElementById('screenViewer').classList.contains('active')) {
+      connectToCamera(pin);
+    }
+  }, 4000);
+}
+
+/* ─── CLOCK ─────────────────────────────────────────────── */
+function startClock() {
+  updateClock();
+  clockInterval = setInterval(updateClock, 1000);
+}
+
+function updateClock() {
+  const now = new Date();
+  const hh = now.getHours().toString().padStart(2, '0');
+  const mm = now.getMinutes().toString().padStart(2, '0');
+  const ss = now.getSeconds().toString().padStart(2, '0');
+  document.getElementById('camClock').textContent = `${hh}:${mm}`;
+
+  const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const d = dias[now.getDay()];
+  const fecha = `${d.charAt(0).toUpperCase()+d.slice(1)}, ${now.getDate()} ${meses[now.getMonth()]} ${now.getFullYear()}`;
+  document.getElementById('camDate').textContent = fecha;
+}
+
+/* ─── WEATHER ───────────────────────────────────────────── */
+const WMO = {
+  0:  ['☀️','Despejado'],
+  1:  ['🌤️','Casi despejado'],
+  2:  ['⛅','Parcialmente nublado'],
+  3:  ['☁️','Nublado'],
+  45: ['🌫️','Niebla'],
+  48: ['🌫️','Niebla con escarcha'],
+  51: ['🌦️','Llovizna ligera'],
+  53: ['🌦️','Llovizna'],
+  55: ['🌧️','Llovizna intensa'],
+  61: ['🌧️','Lluvia ligera'],
+  63: ['🌧️','Lluvia'],
+  65: ['🌧️','Lluvia intensa'],
+  71: ['🌨️','Nieve ligera'],
+  73: ['❄️','Nieve'],
+  75: ['❄️','Nieve intensa'],
+  80: ['🌦️','Chubascos ligeros'],
+  81: ['🌧️','Chubascos'],
+  82: ['⛈️','Chubascos intensos'],
+  95: ['⛈️','Tormenta'],
+  96: ['⛈️','Tormenta con granizo'],
+  99: ['⛈️','Tormenta fuerte'],
+};
+
+async function fetchWeather() {
+  const w = document.getElementById('weatherWidget');
+  try {
+    const pos = await new Promise((resolve, reject) =>
+      navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 })
+    );
+    const { latitude: lat, longitude: lon } = pos.coords;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m` +
+      `&timezone=auto&forecast_days=1`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const c = data.current;
+    const wmo = WMO[c.weather_code] || WMO[Math.floor(c.weather_code/10)*10] || ['🌡️',''];
+    const temp = Math.round(c.temperature_2m);
+    const hum = c.relative_humidity_2m;
+    const wind = Math.round(c.wind_speed_10m);
+
+    w.innerHTML = `<span class="w-ico">${wmo[0]}</span>
+      <span class="w-temp">${temp}°C</span>
+      <span style="color:rgba(255,255,255,.6);font-size:.8rem">${wmo[1]}</span>`;
+
+    // Extra info pills
+    const extra = document.getElementById('extraInfo');
+    extra.innerHTML = `
+      <div class="cam-info-pill">💧 Humedad: ${hum}%</div>
+      <div class="cam-info-pill">💨 Viento: ${wind} km/h</div>`;
+
+  } catch(e) {
+    w.innerHTML = `<span class="w-ico">🌡️</span><span style="color:rgba(255,255,255,.5)">Sin clima</span>`;
+  }
+  // Refresh every 30 min
+  setTimeout(fetchWeather, 30 * 60 * 1000);
+}
+
+/* ─── CLEANUP ───────────────────────────────────────────── */
+function stopAll() {
+  clearInterval(clockInterval);
+  clockInterval = null;
+  clearTimeout(reconnectTimer);
+
+  if (wakeLock) { try { wakeLock.release(); } catch(_) {} wakeLock = null; }
+
+  activeCalls.forEach(c => { try { c.close(); } catch(_) {} });
+  activeCalls = [];
+
+  if (viewerCall) { try { viewerCall.close(); } catch(_) {} viewerCall = null; }
+
+  if (peer) { try { peer.destroy(); } catch(_) {} peer = null; }
+
+  [camStream, frontStream].forEach(s => {
+    if (s) s.getTracks().forEach(t => t.stop());
+  });
+  camStream = null;
+  frontStream = null;
+  usingFront = false;
+  dimmed = false;
+  document.getElementById('dimOverlay').style.display = 'none';
+  document.getElementById('pipContainer').style.display = 'none';
+  document.getElementById('extraInfo').innerHTML = '';
+}
+
+/* ─── HELPERS ───────────────────────────────────────────── */
+function sanitizePin(pin) {
+  // Make PeerJS ID safe and somewhat unique to this app
+  return 'v1-' + pin.replace(/[^a-zA-Z0-9]/g, '');
+}
+
+let toastTimer = null;
+function toast(msg, ms = 2500) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// PIN input: only digits
+document.getElementById('pinInput').addEventListener('input', function() {
+  this.value = this.value.replace(/\D/g, '');
+});
+// Enter key
+document.getElementById('pinInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') iniciar();
+});
+</script>
+</body>
+</html>
