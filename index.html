@@ -407,6 +407,59 @@
       .cam-clock { font-size: 2.5rem; }
       .cam-top { padding: .8rem 1.2rem .5rem; }
     }
+
+    /* ─── AUDIO LEVEL BAR ────────────────────────────────────── */
+    #audioBar {
+      display: none;
+      position: absolute;
+      bottom: 76px;
+      left: 1rem;
+      right: 72px;
+      height: 3px;
+      background: rgba(255,255,255,.12);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #audioLevel {
+      height: 100%;
+      width: 0%;
+      background: var(--success);
+      border-radius: 2px;
+      transition: width .08s linear;
+    }
+    #audioLevel.loud { background: var(--warn); }
+    #audioLevel.very-loud { background: var(--danger); }
+
+    /* ─── VIEWER SOUND ALERT ─────────────────────────────────── */
+    #soundFlash {
+      display: none;
+      position: absolute;
+      inset: 0;
+      border: 4px solid var(--warn);
+      pointer-events: none;
+      z-index: 15;
+    }
+    #soundNotifBar {
+      display: none;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: .75rem 1.2rem;
+      background: rgba(245,158,11,.92);
+      backdrop-filter: blur(6px);
+      color: #000;
+      font-weight: 700;
+      font-size: .95rem;
+      text-align: center;
+      z-index: 20;
+      transform: translateY(-100%);
+      transition: transform .3s ease;
+    }
+    #soundNotifBar.visible { transform: translateY(0); }
+
+    @keyframes flash {
+      0%   { opacity: 1; }
+      100% { opacity: 0; }
+    }
   </style>
 </head>
 <body>
@@ -488,11 +541,15 @@
       <div class="cam-extra-info" id="extraInfo"></div>
       <div class="cam-controls">
         <button class="cam-btn" id="btnSwitch" onclick="switchCamera()" title="Cambiar cámara">🔄</button>
+        <button class="cam-btn" id="btnAudio" onclick="toggleAudio()" title="Detección de sonido">🎤</button>
         <button class="cam-btn" id="btnDim" onclick="toggleDim()" title="Atenuar pantalla">🌙</button>
         <button class="cam-btn" onclick="volverSetup()" title="Desconectar">⏏️</button>
       </div>
     </div>
   </div>
+
+  <!-- Audio level bar -->
+  <div id="audioBar"><div id="audioLevel"></div></div>
 
   <!-- Dim overlay -->
   <div id="dimOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.92);cursor:pointer;z-index:50"
@@ -504,6 +561,10 @@
 ══════════════════════════════════════════════════════════ -->
 <div id="screenViewer" class="screen">
   <video id="videoViewer" autoplay playsinline></video>
+
+  <!-- Sound notification -->
+  <div id="soundFlash"></div>
+  <div id="soundNotifBar">🔊 Sonido detectado en la cámara</div>
 
   <div class="view-overlay">
     <div class="view-status" id="viewStatus">
@@ -562,13 +623,22 @@ let peer = null;
 let camStream = null;       // back camera
 let frontStream = null;     // front camera
 let activeCalls = [];       // calls from viewers (camera side)
+let activeConns = [];       // DataConnections for sound alerts (camera side)
 let viewerCall = null;      // call to camera (viewer side)
+let viewerConn = null;      // DataConnection (viewer side)
 let wakeLock = null;
 let dimmed = false;
 let usingFront = false;     // which cam is currently being shared
 let clockInterval = null;
 let reconnectTimer = null;
 let currentPin = '';
+// Audio detection
+let audioCtx = null;
+let audioStream = null;
+let audioEnabled = false;
+let audioAnimFrame = null;
+let lastSoundNotif = 0;
+let soundNotifTimer = null;
 
 /* ─── URL PARAMS — auto-fill from bookmarks ─────────────── */
 (function() {
@@ -686,6 +756,15 @@ async function initCameraMode(pin) {
     });
   });
 
+  // DataConnections para alertas de sonido
+  peer.on('connection', conn => {
+    conn.on('open', () => {
+      activeConns.push(conn);
+      conn.on('close', () => { activeConns = activeConns.filter(c => c !== conn); });
+      conn.on('error', () => { activeConns = activeConns.filter(c => c !== conn); });
+    });
+  });
+
   // Keep wake lock on visibility change
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && wakeLock === null) {
@@ -743,6 +822,72 @@ function togglePip() {
   if (frontStream) switchCamera();
 }
 
+/* ─── AUDIO DETECTION ───────────────────────────────────── */
+async function toggleAudio() {
+  if (audioEnabled) {
+    // Desactivar
+    cancelAnimationFrame(audioAnimFrame); audioAnimFrame = null;
+    if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; }
+    audioEnabled = false;
+    document.getElementById('btnAudio').classList.remove('active');
+    document.getElementById('audioBar').style.display = 'none';
+    document.getElementById('audioLevel').style.width = '0%';
+    toast('Detección de sonido desactivada', 2000);
+    return;
+  }
+
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch(e) {
+    toast('Micrófono no disponible: ' + e.message, 4000);
+    return;
+  }
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(audioStream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.6;
+  source.connect(analyser);
+
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  const THRESHOLD = 38;   // 0-255, ajustable — sube si hay muchas falsas alarmas
+  const COOLDOWN  = 12000; // ms entre notificaciones al visor
+
+  function tick() {
+    analyser.getByteFrequencyData(buf);
+    const avg = buf.reduce((s, v) => s + v, 0) / buf.length;
+    const pct = Math.min(100, avg * 2.5);
+
+    const lvl = document.getElementById('audioLevel');
+    lvl.style.width = pct + '%';
+    lvl.className = avg > 70 ? 'very-loud' : avg > THRESHOLD ? 'loud' : '';
+
+    if (avg > THRESHOLD) {
+      const now = Date.now();
+      if (now - lastSoundNotif > COOLDOWN) {
+        lastSoundNotif = now;
+        sendSoundAlert(Math.round(avg));
+      }
+    }
+    audioAnimFrame = requestAnimationFrame(tick);
+  }
+  tick();
+
+  audioEnabled = true;
+  document.getElementById('btnAudio').classList.add('active');
+  document.getElementById('audioBar').style.display = 'block';
+  toast('Detección de sonido activada', 2000);
+}
+
+function sendSoundAlert(level) {
+  const msg = { type: 'sound', level, ts: Date.now() };
+  activeConns.forEach(conn => {
+    try { if (conn.open) conn.send(msg); } catch(_) {}
+  });
+}
+
 /* ─── VIEWER MODE ───────────────────────────────────────── */
 async function initViewerMode(pin) {
   document.getElementById('viewInfo').textContent = `PIN: ${pin}`;
@@ -751,6 +896,11 @@ async function initViewerMode(pin) {
   document.getElementById('viewStatus').style.flexDirection = 'column';
   document.getElementById('viewStatus').style.alignItems = 'center';
 
+  // Pedir permiso de notificaciones
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
   peer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
 
   peer.on('open', () => connectToCamera(pin));
@@ -758,6 +908,59 @@ async function initViewerMode(pin) {
     console.error('PeerJS viewer error:', err);
     scheduleReconnect(pin);
   });
+}
+
+function openDataChannel(cameraPeerId) {
+  if (viewerConn && viewerConn.open) return; // ya conectado
+  try {
+    viewerConn = peer.connect(cameraPeerId, { reliable: true, serialization: 'json' });
+    viewerConn.on('data', data => {
+      if (data?.type === 'sound') showSoundNotification();
+    });
+    viewerConn.on('close', () => {
+      viewerConn = null;
+      // Reconectar data channel pasados 5s
+      setTimeout(() => { if (peer && !peer.destroyed) openDataChannel(cameraPeerId); }, 5000);
+    });
+    viewerConn.on('error', () => { viewerConn = null; });
+  } catch(e) {
+    console.warn('DataChannel error:', e);
+  }
+}
+
+function showSoundNotification() {
+  // Vibrar en móvil
+  if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+
+  // Flash de borde
+  const flash = document.getElementById('soundFlash');
+  flash.style.display = 'block';
+  flash.style.animation = 'none';
+  void flash.offsetWidth;
+  flash.style.animation = 'flash .7s ease-out forwards';
+  setTimeout(() => { flash.style.display = 'none'; }, 700);
+
+  // Barra de notificación
+  const bar = document.getElementById('soundNotifBar');
+  bar.style.display = 'block';
+  bar.classList.add('visible');
+  clearTimeout(soundNotifTimer);
+  soundNotifTimer = setTimeout(() => {
+    bar.classList.remove('visible');
+    setTimeout(() => { bar.style.display = 'none'; }, 300);
+  }, 6000);
+
+  // Notificación del sistema (si está en segundo plano)
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try {
+      new Notification('🔊 Sonido detectado', {
+        body: 'La cámara detectó un sonido',
+        tag: 'sound-alert',
+        renotify: true,
+        silent: false
+      });
+    } catch(_) {}
+  }
 }
 
 function setViewStatusText(txt) {
@@ -801,6 +1004,8 @@ function connectToCamera(pin) {
     vid.play().catch(() => {});
     clearTimeout(reconnectTimer);
     toast('Conectado a la cámara', 2000);
+    // Abrir canal de datos para recibir alertas de sonido
+    openDataChannel(peerId);
   });
 
   viewerCall.on('close', () => {
@@ -925,8 +1130,11 @@ function stopAll() {
 
   activeCalls.forEach(c => { try { c.close(); } catch(_) {} });
   activeCalls = [];
+  activeConns.forEach(c => { try { c.close(); } catch(_) {} });
+  activeConns = [];
 
   if (viewerCall) { try { viewerCall.close(); } catch(_) {} viewerCall = null; }
+  if (viewerConn) { try { viewerConn.close(); } catch(_) {} viewerConn = null; }
 
   if (peer) { try { peer.destroy(); } catch(_) {} peer = null; }
 
@@ -935,6 +1143,17 @@ function stopAll() {
   });
   camStream = null;
   frontStream = null;
+
+  // Audio cleanup
+  cancelAnimationFrame(audioAnimFrame); audioAnimFrame = null;
+  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; }
+  audioEnabled = false;
+  document.getElementById('audioBar').style.display = 'none';
+  document.getElementById('audioLevel').style.width = '0%';
+  const bar = document.getElementById('soundNotifBar');
+  bar.classList.remove('visible'); bar.style.display = 'none';
+
   usingFront = false;
   dimmed = false;
   document.getElementById('dimOverlay').style.display = 'none';
