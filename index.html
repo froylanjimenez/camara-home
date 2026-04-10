@@ -524,6 +524,38 @@
 <script>
 'use strict';
 
+/* ─── ICE CONFIG (STUN + free TURN via Open Relay Project) ── */
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject', credential: 'openrelayproject' },
+  ]
+};
+
+/* Crea un MediaStream con un video track real (canvas 1×1) para el visor.
+   Un MediaStream vacío no genera SDP válido en Chrome/Safari. */
+function createDummyStream() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2; canvas.height = 2;
+  const ctx = canvas.getContext('2d');
+  // Necesita dibujar algo periódicamente para que captureStream() sea activo
+  let toggle = false;
+  const tick = () => {
+    ctx.fillStyle = toggle ? '#000' : '#001';
+    ctx.fillRect(0, 0, 2, 2);
+    toggle = !toggle;
+  };
+  tick();
+  setInterval(tick, 1000);
+  return canvas.captureStream(1);
+}
+
 /* ─── STATE ─────────────────────────────────────────────── */
 let selectedMode = 'cam';
 let peer = null;
@@ -622,13 +654,7 @@ async function initCameraMode(pin) {
 
   // PeerJS
   const peerId = `ch-${sanitizePin(pin)}`;
-  peer = new Peer(peerId, {
-    debug: 0,
-    config: { iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]}
-  });
+  peer = new Peer(peerId, { debug: 0, config: ICE_CONFIG });
 
   peer.on('open', id => {
     setViewerStatus(0);
@@ -725,13 +751,7 @@ async function initViewerMode(pin) {
   document.getElementById('viewStatus').style.flexDirection = 'column';
   document.getElementById('viewStatus').style.alignItems = 'center';
 
-  peer = new Peer(undefined, {
-    debug: 0,
-    config: { iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]}
-  });
+  peer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
 
   peer.on('open', () => connectToCamera(pin));
   peer.on('error', err => {
@@ -740,17 +760,38 @@ async function initViewerMode(pin) {
   });
 }
 
+function setViewStatusText(txt) {
+  document.getElementById('viewStatusTxt').textContent = txt;
+}
+
 function connectToCamera(pin) {
   const peerId = `ch-${sanitizePin(pin)}`;
-  document.getElementById('viewStatusTxt').textContent = 'Buscando cámara...';
+  setViewStatusText('Buscando cámara…');
 
-  // Send empty stream (required by PeerJS call API)
-  const emptyStream = new MediaStream();
-  viewerCall = peer.call(peerId, emptyStream);
+  // IMPORTANTE: usar un canvas stream real en vez de MediaStream vacío.
+  // Un stream sin tracks genera un SDP inválido en Chrome/Safari y la
+  // llamada queda congelada sin disparar eventos de error.
+  const dummyStream = createDummyStream();
+  viewerCall = peer.call(peerId, dummyStream);
 
   if (!viewerCall) {
+    setViewStatusText('No se encontró la cámara. Reintentando…');
     scheduleReconnect(pin);
     return;
+  }
+
+  setViewStatusText('Negociando conexión…');
+
+  // Monitorear estado ICE para dar feedback más preciso
+  const pc = viewerCall.peerConnection;
+  if (pc) {
+    pc.addEventListener('iceconnectionstatechange', () => {
+      const s = pc.iceConnectionState;
+      if (s === 'checking')   setViewStatusText('Verificando ruta de red…');
+      if (s === 'connected')  setViewStatusText('Recibiendo video…');
+      if (s === 'failed')     setViewStatusText('Fallo de red. Reintentando…');
+      if (s === 'disconnected') setViewStatusText('Conexión interrumpida…');
+    });
   }
 
   viewerCall.on('stream', stream => {
@@ -764,24 +805,25 @@ function connectToCamera(pin) {
 
   viewerCall.on('close', () => {
     document.getElementById('viewStatus').style.display = 'flex';
-    document.getElementById('viewStatusTxt').textContent = 'Cámara desconectada. Reconectando...';
+    setViewStatusText('Cámara desconectada. Reconectando…');
     scheduleReconnect(pin);
   });
 
-  viewerCall.on('error', () => {
-    document.getElementById('viewStatusTxt').textContent = 'Error de conexión. Reintentando...';
+  viewerCall.on('error', (err) => {
+    console.error('viewerCall error', err);
+    setViewStatusText('Error de conexión. Reintentando…');
     scheduleReconnect(pin);
   });
 
-  // Timeout if no stream in 10s
+  // Timeout — si en 20s no llegó stream, reintentar
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => {
     if (document.getElementById('viewStatus').style.display !== 'none') {
-      document.getElementById('viewStatusTxt').textContent = 'Sin respuesta. Reintentando...';
-      viewerCall?.close();
+      setViewStatusText('Sin respuesta. Reintentando…');
+      try { viewerCall?.close(); } catch(_) {}
       scheduleReconnect(pin);
     }
-  }, 10000);
+  }, 20000);
 }
 
 function scheduleReconnect(pin) {
